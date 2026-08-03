@@ -1,0 +1,35 @@
+# Override untuk build image dari source (bukan pull dari GHCR).
+#
+# Pakai:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+#
+# Rebuild setelah ada perubahan kode:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache web
+#
+# Catatan:
+# - `pull_policy: never` memastikan compose memakai image hasil build lokal,
+#   bukan menarik ulang dari ghcr.io seperti di docker-compose.yml.
+# - Service `migrate` sengaja tidak punya section `build:` karena memakai image
+#   yang sama dengan `server`; build sekali, dipakai dua kali.
+# - Env `NEXT_PUBLIC_*` pada web di-inject saat runtime oleh
+#   apps/web/docker-entrypoint.sh, jadi tidak perlu build args di sini.
+
+services:
+  server:
+    image: crikket-server:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+
+  migrate:
+    image: crikket-server:local
+    pull_policy: never
+
+  web:
+    image: crikket-web:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
