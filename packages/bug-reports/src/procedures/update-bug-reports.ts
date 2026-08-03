@@ -1,0 +1,305 @@
+import { db } from "@crikket/db"
+import { bugReport } from "@crikket/db/schema/bug-report"
+import {
+  PRIORITY_OPTIONS,
+  type Priority,
+} from "@crikket/shared/constants/priorities"
+import {
+  isTestCaseType,
+  TEST_CASE_TYPE_VALUES,
+  TEST_SCENARIO_MAX_LENGTH,
+  TESTED_FEATURE_MAX_LENGTH,
+  type TestCaseType,
+} from "@crikket/shared/constants/test-case"
+import { ORPCError } from "@orpc/server"
+import { and, eq, inArray } from "drizzle-orm"
+import { z } from "zod"
+import { assertRoomInOrganization } from "../lib/rooms"
+import {
+  isStatus,
+  isVisibility,
+  optionalText,
+  statusValues,
+  visibilityValues,
+} from "../lib/utils"
+import { protectedProcedure } from "./context"
+import { normalizeTags, requireActiveOrgId } from "./helpers"
+
+const priorityValues = Object.values(PRIORITY_OPTIONS) as [
+  Priority,
+  ...Priority[],
+]
+
+const tagsInputSchema = z.array(z.string().trim().min(1).max(40)).max(20)
+
+const bugReportUpdateInputSchema = z
+  .object({
+    id: z.string().min(1),
+    title: optionalText(200),
+    status: z.enum(statusValues).optional(),
+    priority: z.enum(priorityValues).optional(),
+    visibility: z.enum(visibilityValues).optional(),
+    tags: tagsInputSchema.optional(),
+    // `null` moves the report out of every room.
+    roomId: z.string().min(1).max(64).nullable().optional(),
+    // QA scope. Empty string clears the field.
+    testedFeature: z
+      .string()
+      .max(TESTED_FEATURE_MAX_LENGTH)
+      .transform((value) => value.trim())
+      .nullable()
+      .optional(),
+    testScenario: z
+      .string()
+      .max(TEST_SCENARIO_MAX_LENGTH)
+      .transform((value) => value.trim())
+      .nullable()
+      .optional(),
+    testCaseType: z.enum(TEST_CASE_TYPE_VALUES).nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.title === undefined &&
+      value.status === undefined &&
+      value.priority === undefined &&
+      value.visibility === undefined &&
+      value.tags === undefined &&
+      value.roomId === undefined &&
+      value.testedFeature === undefined &&
+      value.testScenario === undefined &&
+      value.testCaseType === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one update field is required",
+      })
+    }
+  })
+
+const bugReportBulkUpdateInputSchema = z
+  .object({
+    ids: z.array(z.string().min(1)).min(1).max(200),
+    status: z.enum(statusValues).optional(),
+    priority: z.enum(priorityValues).optional(),
+    visibility: z.enum(visibilityValues).optional(),
+    tags: tagsInputSchema.optional(),
+    roomId: z.string().min(1).max(64).nullable().optional(),
+    // Only the case type is bulk-editable; the scenario text is per report.
+    testCaseType: z.enum(TEST_CASE_TYPE_VALUES).nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.status === undefined &&
+      value.priority === undefined &&
+      value.visibility === undefined &&
+      value.tags === undefined &&
+      value.roomId === undefined &&
+      value.testCaseType === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one update field is required",
+      })
+    }
+  })
+
+function buildUpdateValues(input: {
+  title?: string
+  status?: (typeof statusValues)[number]
+  priority?: Priority
+  visibility?: (typeof visibilityValues)[number]
+  tags?: string[]
+  roomId?: string | null
+  testedFeature?: string | null
+  testScenario?: string | null
+  testCaseType?: TestCaseType | null
+}) {
+  const values: {
+    title?: string
+    status?: string
+    priority?: string
+    visibility?: string
+    tags?: string[]
+    roomId?: string | null
+    testedFeature?: string | null
+    testScenario?: string | null
+    testCaseType?: string | null
+  } = {}
+
+  if (input.roomId !== undefined) {
+    values.roomId = input.roomId
+  }
+
+  if (input.testedFeature !== undefined) {
+    values.testedFeature = input.testedFeature ? input.testedFeature : null
+  }
+
+  if (input.testScenario !== undefined) {
+    // An empty scenario clears the column instead of storing "".
+    values.testScenario = input.testScenario ? input.testScenario : null
+  }
+
+  if (input.testCaseType !== undefined) {
+    values.testCaseType = input.testCaseType
+  }
+
+  if (input.title !== undefined) {
+    values.title = input.title
+  }
+
+  if (input.status !== undefined) {
+    values.status = input.status
+  }
+
+  if (input.priority !== undefined) {
+    values.priority = input.priority
+  }
+
+  if (input.visibility !== undefined) {
+    values.visibility = input.visibility
+  }
+
+  if (input.tags !== undefined) {
+    values.tags = normalizeTags(input.tags) ?? []
+  }
+
+  return values
+}
+
+/**
+ * Reports may only be moved into an active room of the same organization.
+ * Passing `null` (move out of every room) needs no validation.
+ */
+async function assertRoomUpdateAllowed(input: {
+  organizationId: string
+  roomId?: string | null
+}): Promise<void> {
+  if (!input.roomId) {
+    return
+  }
+
+  await assertRoomInOrganization({
+    organizationId: input.organizationId,
+    requireActive: true,
+    roomId: input.roomId,
+  })
+}
+
+export const updateBugReport = protectedProcedure
+  .input(bugReportUpdateInputSchema)
+  .handler(async ({ context, input }) => {
+    const activeOrgId = requireActiveOrgId(context.session)
+    await assertRoomUpdateAllowed({
+      organizationId: activeOrgId,
+      roomId: input.roomId,
+    })
+    const values = buildUpdateValues(input)
+
+    const updated = await db
+      .update(bugReport)
+      .set(values)
+      .where(
+        and(
+          eq(bugReport.id, input.id),
+          eq(bugReport.organizationId, activeOrgId)
+        )
+      )
+      .returning({
+        id: bugReport.id,
+        title: bugReport.title,
+        status: bugReport.status,
+        priority: bugReport.priority,
+        visibility: bugReport.visibility,
+        tags: bugReport.tags,
+        roomId: bugReport.roomId,
+        testedFeature: bugReport.testedFeature,
+        testScenario: bugReport.testScenario,
+        testCaseType: bugReport.testCaseType,
+      })
+
+    const report = updated[0]
+    if (!report) {
+      throw new ORPCError("NOT_FOUND", { message: "Bug report not found" })
+    }
+
+    return {
+      id: report.id,
+      title: report.title,
+      status: isStatus(report.status) ? report.status : statusValues[0],
+      priority: priorityValues.includes(report.priority as Priority)
+        ? (report.priority as Priority)
+        : PRIORITY_OPTIONS.none,
+      visibility: isVisibility(report.visibility)
+        ? report.visibility
+        : visibilityValues[1],
+      tags: Array.isArray(report.tags) ? report.tags : [],
+      roomId: report.roomId,
+      testedFeature: report.testedFeature,
+      testScenario: report.testScenario,
+      testCaseType: isTestCaseType(report.testCaseType)
+        ? report.testCaseType
+        : null,
+    }
+  })
+
+export const updateBugReportsBulk = protectedProcedure
+  .input(bugReportBulkUpdateInputSchema)
+  .handler(async ({ context, input }) => {
+    const activeOrgId = requireActiveOrgId(context.session)
+    await assertRoomUpdateAllowed({
+      organizationId: activeOrgId,
+      roomId: input.roomId,
+    })
+    const values = buildUpdateValues(input)
+    const uniqueIds = Array.from(new Set(input.ids))
+
+    const updated = await db
+      .update(bugReport)
+      .set(values)
+      .where(
+        and(
+          eq(bugReport.organizationId, activeOrgId),
+          inArray(bugReport.id, uniqueIds)
+        )
+      )
+      .returning({ id: bugReport.id })
+
+    return {
+      updatedCount: updated.length,
+      ids: updated.map((row) => row.id),
+    }
+  })
+
+export const updateBugReportVisibility = protectedProcedure
+  .input(
+    z.object({
+      id: z.string().min(1),
+      visibility: z.enum(visibilityValues),
+    })
+  )
+  .handler(async ({ context, input }) => {
+    const activeOrgId = requireActiveOrgId(context.session)
+
+    const updated = await db
+      .update(bugReport)
+      .set({ visibility: input.visibility })
+      .where(
+        and(
+          eq(bugReport.id, input.id),
+          eq(bugReport.organizationId, activeOrgId)
+        )
+      )
+      .returning({ id: bugReport.id, visibility: bugReport.visibility })
+
+    const report = updated[0]
+    if (!report) {
+      throw new ORPCError("NOT_FOUND", { message: "Bug report not found" })
+    }
+
+    return {
+      id: report.id,
+      visibility: isVisibility(report.visibility)
+        ? report.visibility
+        : visibilityValues[1],
+    }
+  })

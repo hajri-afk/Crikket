@@ -1,0 +1,79 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react",
+    "ultracite/biome/next"
+  ],
+  "files": {
+    "ignoreUnknown": false,
+    "includes": [
+      "apps/**",
+      "packages/**",
+      "biome.jsonc",
+      "package.json",
+      "tsconfig.json",
+      "turbo.json",
+      "!bun.lock",
+      "!**/*.md",
+      "!**/.claude",
+      "!**/.cursor",
+      "!**/.opencode",
+      "!**/.github",
+      "!packages/ui/src/components/ui",
+      "!packages/ui/src/components/magicui",
+      "!packages/ui/src/components/data-table",
+      "!packages/db/src/migrations"
+    ]
+  },
+  "javascript": {
+    "formatter": {
+      "semicolons": "asNeeded"
+    },
+    "globals": ["defineBackground", "defineContentScript", "browser", "chrome"]
+  },
+  "linter": {
+    "rules": {
+      "performance": {
+        "noImgElement": "off",
+        "noNamespaceImport": "off",
+        "noBarrelFile": "off"
+      },
+      "a11y": {
+        "noSvgWithoutTitle": "off",
+        "useButtonType": "off",
+        "noLabelWithoutControl": "off"
+      },
+      "style": {
+        "useConsistentTypeDefinitions": "off",
+        "useBlockStatements": "off",
+        "useFilenamingConvention": "off",
+        "noNonNullAssertion": "off",
+        "noNestedTernary": "off"
+      },
+      "correctness": {
+        "useImageSize": "off",
+        "noUnusedFunctionParameters": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@crikket/auth": "Use @crikket/auth/client in apps/web. Do not import server auth."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

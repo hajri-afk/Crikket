@@ -1,0 +1,43 @@
+{
+  "name": "extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "manifest.json description",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt --port 5555",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:local": "wxt build --mode localhost && rm -rf chrome-mv3 && cp -R .output/chrome-mv3-localhost chrome-mv3",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@crikket/api": "workspace:*",
+    "@crikket/capture-core": "workspace:*",
+    "@crikket/env": "workspace:*",
+    "@crikket/shared": "workspace:*",
+    "@crikket/ui": "workspace:*",
+    "@orpc/client": "catalog:",
+    "@tanstack/react-form": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "zod": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "lucide-react": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "catalog:",
+    "@types/chrome": "^0.1.36",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@wxt-dev/module-react": "^1.1.5",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "wxt": "^0.20.6"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run dist/index.mjs"
+  },
+  "dependencies": {
+    "@crikket/api": "workspace:*",
+    "@crikket/auth": "workspace:*",
+    "@crikket/bug-reports": "workspace:*",
+    "@crikket/db": "workspace:*",
+    "@crikket/env": "workspace:*",
+    "@orpc/openapi": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/zod": "catalog:",
+    "@upstash/ratelimit": "catalog:",
+    "@upstash/redis": "catalog:",
+    "better-auth": "catalog:",
+    "dotenv": "catalog:",
+    "hono": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@crikket/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "tsdown": "^0.16.5",
+    "typescript": "catalog:"
+  }
+}

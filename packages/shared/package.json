@@ -1,0 +1,26 @@
+{
+  "name": "@crikket/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./config/*": "./src/config/*.ts",
+    "./constants/*": "./src/constants/*.ts",
+    "./lib/*": "./src/lib/*.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@orpc/client": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/tanstack-query": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "posthog-js": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@crikket/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

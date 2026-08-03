@@ -1,0 +1,28 @@
+{
+  "name": "@crikket/billing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test test"
+  },
+  "dependencies": {
+    "@crikket/db": "workspace:*",
+    "@crikket/env": "workspace:*",
+    "@crikket/shared": "workspace:*",
+    "@polar-sh/sdk": "catalog:",
+    "@orpc/server": "catalog:",
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@crikket/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

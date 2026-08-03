@@ -1,0 +1,112 @@
+---
+title: Operations
+description: Operations including updates, backups, monitoring, and runbook commands.
+---
+
+## Update Procedure
+
+Recommended:
+
+```bash
+./scripts/update.sh
+```
+
+Post-update verification:
+
+```bash
+./scripts/healthcheck.sh
+```
+
+Manual equivalent:
+
+```bash
+git pull
+docker compose pull
+docker compose up -d
+```
+
+External PostgreSQL equivalent:
+
+```bash
+git pull
+docker compose -f docker-compose.external-db.yml pull
+docker compose -f docker-compose.external-db.yml up -d
+```
+
+If you enabled built-in Caddy, add `-f docker-compose.caddy.yml` to the same commands.
+
+Post-update checks:
+
+- `docker compose ps`
+- Review `server` and `web` logs
+- Verify login and one end-to-end API action
+
+## Backup Strategy
+
+Minimum recommendation:
+
+- Daily PostgreSQL backup
+- Frequent upload storage backup
+- Retention of at least 7-14 days
+- Monthly restore drill
+
+Example database dump:
+
+```bash
+./scripts/backup-db.sh
+```
+
+`backup-db.sh` is for the bundled Compose PostgreSQL service. If you use an external database, use that provider's backup tooling instead.
+
+## Monitoring
+
+Track at minimum:
+
+- Container health and restart counts
+- API latency and error rate
+- Disk usage on data volumes
+- Host memory pressure
+
+## Quick Commands
+
+```bash
+# Start
+./scripts/start.sh
+./scripts/start.sh caddy
+
+# Update
+./scripts/update.sh
+
+# Restart
+./scripts/restart.sh
+./scripts/restart.sh server web
+
+# Healthcheck
+./scripts/healthcheck.sh
+
+# Status
+docker compose ps
+
+# Logs
+docker compose logs -f
+docker compose logs -f server
+
+# Database backup
+./scripts/backup-db.sh
+
+# Migrate schema manually (if needed)
+docker compose run --rm migrate
+
+# Stop
+docker compose down
+```
+
+`restart.sh` only restarts existing containers. Use it for routine restarts, not for env or config changes.
+
+If you changed env files, images, Compose config, or the `Caddyfile`, use:
+
+```bash
+./scripts/update.sh
+```
+
+or recreate the affected services with `docker compose up -d --force-recreate`.

@@ -1,0 +1,15 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "comparison",
+    "---Usage---",
+    "...usage",
+    "---Self-Hosting---",
+    "...self-hosting",
+    "---Deployment---",
+    "...deployment",
+    "---Extension---",
+    "...extension"
+  ]
+}

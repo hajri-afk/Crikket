@@ -1,0 +1,81 @@
+# Infrastruktur lokal Crikket (Postgres + MinIO) — replika environment dev yang sudah berjalan.
+#
+# Pakai:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml ps
+#   docker compose -f docker-compose.dev.yml down          # stop, data tetap ada
+#   docker compose -f docker-compose.dev.yml down -v       # stop + hapus data
+#
+# Catatan:
+# - Postgres sengaja dipublish di host port 5433 (bukan 5432) supaya tidak bentrok
+#   dengan Postgres lokal / Postgres.app yang biasanya sudah memakai 5432.
+# - File ini HANYA untuk development. Untuk staging/production pakai
+#   docker-compose.yml / docker-compose.external-db.yml / docker-compose.caddy.yml.
+# - Kalau sebelumnya container dibuat manual via `docker run`, hapus dulu:
+#     docker rm -f crikket-postgres-dev crikket-minio
+
+name: crikket-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: crikket-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DEV_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${DEV_POSTGRES_DB:-crikket}
+    ports:
+      - "${DEV_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - crikket_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DEV_POSTGRES_USER:-postgres} -d ${DEV_POSTGRES_DB:-crikket}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    container_name: crikket-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${DEV_MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${DEV_MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "${DEV_MINIO_API_PORT:-9000}:9000"
+      - "${DEV_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - crikket_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Sekali jalan: bikin bucket + set policy public-read.
+  # Tanpa policy `download`, artifact (screenshot/video) akan 403 saat dibuka dari dashboard.
+  minio-init:
+    image: minio/mc
+    container_name: crikket-minio-init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "${DEV_MINIO_ROOT_USER:-minioadmin}" "${DEV_MINIO_ROOT_PASSWORD:-minioadmin123}" &&
+        mc mb -p "local/${DEV_STORAGE_BUCKET:-crikket-development}" &&
+        mc anonymous set download "local/${DEV_STORAGE_BUCKET:-crikket-development}" &&
+        echo "bucket ${DEV_STORAGE_BUCKET:-crikket-development} siap"
+
+volumes:
+  crikket_pgdata:
+  crikket_minio_data:

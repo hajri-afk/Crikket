@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1772496592578,
+      "tag": "0000_tidy_thundra",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785677397754,
+      "tag": "0001_add_rooms",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785691064310,
+      "tag": "0002_add_test_scenario",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785692581450,
+      "tag": "0003_add_tested_feature",
+      "breakpoints": true
+    }
+  ]
+}

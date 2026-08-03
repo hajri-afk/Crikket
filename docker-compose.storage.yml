@@ -1,0 +1,53 @@
+# Menambahkan object storage (MinIO) ke deployment Crikket.
+#
+# docker-compose.yml resmi TIDAK menyertakan storage — hanya postgres, server, web.
+# Tanpa file ini, upload artifact (screenshot/video) dari extension akan gagal
+# dengan "Direct upload to storage failed".
+#
+# Pakai (di server, gabungkan dengan compose utama):
+#   docker compose -f docker-compose.yml -f docker-compose.storage.yml up -d
+#
+# PENTING — port 9000 WAJIB bisa diakses dari browser karyawan.
+# Extension meng-upload LANGSUNG ke storage memakai presigned URL,
+# tidak melewati server. Jadi STORAGE_ENDPOINT harus host yang publik
+# di jaringan kantor (mis. http://crikket.home:9000), bukan localhost/minio.
+
+services:
+  minio:
+    image: minio/minio
+    container_name: crikket-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER di root .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD di root .env}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Sekali jalan: buat bucket + policy public-read supaya artifact bisa dibuka dashboard.
+  minio-init:
+    image: minio/mc
+    container_name: crikket-minio-init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" &&
+        mc mb -p "local/${STORAGE_BUCKET:-crikket-production}" &&
+        mc anonymous set download "local/${STORAGE_BUCKET:-crikket-production}" &&
+        echo "bucket ${STORAGE_BUCKET:-crikket-production} siap"
+
+volumes:
+  minio_data:

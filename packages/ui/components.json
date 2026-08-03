@@ -1,0 +1,27 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-vega",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/styles/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "menuColor": "default",
+  "menuAccent": "subtle",
+  "aliases": {
+    "components": "@crikket/ui/components",
+    "utils": "@crikket/ui/lib/utils",
+    "ui": "@crikket/ui/components/ui",
+    "lib": "@crikket/ui/lib",
+    "hooks": "@crikket/ui/hooks"
+  },
+  "registries": {
+    "@diceui": "https://diceui.com/r/{name}.json",
+    "@magicui": "https://magicui.design/r/{name}"
+  }
+}

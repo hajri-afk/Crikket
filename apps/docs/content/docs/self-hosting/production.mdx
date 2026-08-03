@@ -1,0 +1,156 @@
+---
+title: Production Setup
+description: Configure domains, TLS, storage, and critical environment variables for production.
+---
+
+## Required Environment Variables
+
+Set these in `apps/server/.env`:
+
+```bash
+DATABASE_URL
+BETTER_AUTH_SECRET
+BETTER_AUTH_URL
+CORS_ORIGINS
+BETTER_AUTH_COOKIE_DOMAIN (optional; set it if you want root-domain cookies)
+ENABLE_PAYMENTS (false)
+STORAGE_BUCKET
+STORAGE_ACCESS_KEY_ID
+STORAGE_SECRET_ACCESS_KEY
+STORAGE_REGION (required when STORAGE_ENDPOINT is unset)
+STORAGE_ENDPOINT (recommended for R2/custom S3 endpoints)
+STORAGE_ADDRESSING_STYLE (optional; `auto`, `path`, or `virtual`)
+STORAGE_PUBLIC_URL (optional)
+```
+
+Set these in `apps/web/.env`:
+
+```bash
+NEXT_PUBLIC_APP_URL
+NEXT_PUBLIC_SERVER_URL
+NEXT_PUBLIC_GOOGLE_AUTH_ENABLED (optional)
+```
+
+Optional Google OAuth:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true`
+>
+> For self-hosting, set `ENABLE_PAYMENTS=false` and ignore `POLAR_*`.
+
+Notes:
+
+- `DATABASE_URL` is the source of truth for the app.
+- `POSTGRES_*` vars are only for configuring the bundled Compose Postgres service.
+- Root `.env` is Docker-only (ports, bundled Postgres init, and optional Caddy settings).
+
+## Recommended Security
+
+These settings are not required for self-hosting, but they are recommended:
+
+```bash
+CAPTURE_SUBMIT_TOKEN_SECRET
+UPSTASH_REDIS_REST_URL
+UPSTASH_REDIS_REST_TOKEN
+TURNSTILE_SITE_KEY
+TURNSTILE_SECRET_KEY
+```
+
+What each one does:
+
+- `CAPTURE_SUBMIT_TOKEN_SECRET` enables signed short-lived capture submit tokens.
+- Upstash Redis enables rate limiting and one-time submit token replay protection.
+- Turnstile enables an anti-bot challenge for capture submissions.
+
+Without them, self-hosted instances still work, but capture submission protections are reduced.
+
+`CAPTURE_SUBMIT_TOKEN_SECRET` can be set on its own. The setup wizard auto-generates it even if Redis and Turnstile are left disabled.
+
+## Built-In Caddy Production Setup
+
+This repo includes a production reverse proxy layer at `docker-compose.caddy.yml`.
+
+The repo includes a root `Caddyfile` that reads its site addresses and ACME email from `.env` and `apps/web/.env`.
+
+Manual production layout:
+
+- Public traffic -> Caddy (`80/443`)
+- Caddy -> `web:3001` for `/`
+- Caddy -> `server:3000` for `/api` and `/rpc`
+
+Start commands:
+
+Prebuilt images:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+Prebuilt images with an external PostgreSQL database:
+
+```bash
+docker compose -f docker-compose.external-db.yml -f docker-compose.caddy.yml up -d
+```
+
+Container routing note:
+
+- In the default compose file, `web` and `server` run as two containers.
+- `web` shares `server` networking, so server-side calls to `localhost:3000` work without extra internal URL variables.
+
+Example `Caddyfile` for the supported single-domain deployment:
+
+```bash
+{
+	email {$CADDY_ACME_EMAIL}
+}
+
+{$NEXT_PUBLIC_APP_URL} {
+	encode gzip zstd
+
+	@api path /api/* /rpc/*
+	handle @api {
+		reverse_proxy server:3000
+	}
+
+	handle {
+		reverse_proxy server:3001
+	}
+}
+```
+
+Matching env for the supported single-domain deployment:
+
+```bash
+NEXT_PUBLIC_APP_URL=https://app.example.com
+NEXT_PUBLIC_SERVER_URL=https://app.example.com
+BETTER_AUTH_URL=https://app.example.com
+CORS_ORIGINS=https://app.example.com
+BETTER_AUTH_COOKIE_DOMAIN=app.example.com
+```
+
+## Storage
+
+- Cloud storage is mandatory in all environments.
+- Bug report artifacts upload directly from the browser to storage.
+- Bucket CORS is required for browser uploads to work.
+- Configure `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, and `STORAGE_SECRET_ACCESS_KEY`.
+- Use `STORAGE_REGION` for AWS S3.
+- Use `STORAGE_ENDPOINT` for Cloudflare R2/custom S3-compatible storage.
+- Leave `STORAGE_ADDRESSING_STYLE` unset to keep the default `auto` behavior.
+- In `auto`, custom non-AWS endpoints use path-style URLs, which fits similar providers.
+- For AWS S3, prefer `STORAGE_REGION` without `STORAGE_ENDPOINT` unless you intentionally need a specific AWS endpoint hostname.
+- Set `STORAGE_ADDRESSING_STYLE=path` or `virtual` only if your provider needs an explicit override.
+- Set `STORAGE_PUBLIC_URL` if you want stable public URLs instead of signed URLs.
+
+Full setup guide:
+
+- [Storage Setup](/docs/self-hosting/storage)
+
+## Data Durability
+
+Compose volume persistence:
+
+- PostgreSQL data in `postgres_data`
+
+Also implement off-host backups and periodic restore tests.
