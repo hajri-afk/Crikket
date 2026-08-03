@@ -22,6 +22,7 @@ import {
 import { AlertCircle } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { FormStep } from "@/components/form-step"
+import { IdleStep } from "@/components/idle-step"
 import { RecordingStep } from "@/components/recording-step"
 import { SuccessStep } from "@/components/success-step"
 import { useCaptureContext } from "@/hooks/use-capture-context"
@@ -37,6 +38,10 @@ import {
   markDebuggerRecordingStarted,
 } from "@/lib/bug-report-debugger/client"
 import { submitBugReportWithUploads } from "@/lib/bug-report-upload"
+import {
+  type CaptureScope,
+  readCaptureScopeFromSearch,
+} from "@/lib/display-media"
 import {
   buildCaptureContextSubmissionData,
   type DebuggerCaptureSummary,
@@ -58,10 +63,40 @@ interface DebuggerSubmissionInput {
   warnings: string[]
 }
 
+function getStateDescription(
+  state: State,
+  isPaused: boolean,
+  captureScope: CaptureScope
+): string {
+  if (state === "idle") {
+    return captureScope === "screen"
+      ? "Pick what to record"
+      : "Waiting for capture"
+  }
+
+  if (state === "recording") {
+    return isPaused ? "Recording paused" : "Recording in progress..."
+  }
+
+  if (state === "stopped") {
+    return "Review and submit"
+  }
+
+  if (state === "success") {
+    return "Report submitted!"
+  }
+
+  return ""
+}
+
 function App() {
   const shortcuts = useCommandShortcuts()
   const [state, setState] = useState<State>("idle")
   const [captureType, setCaptureType] = useState<CaptureType>("video")
+  const captureScope = useMemo(
+    () => readCaptureScopeFromSearch(window.location.search),
+    []
+  )
   const [startTime, setStartTime] = useState<number | null>(null)
   const [recordedDurationMs, setRecordedDurationMs] = useState<number | null>(
     null
@@ -83,15 +118,33 @@ function App() {
   const {
     startRecording: startCapture,
     stopRecording: stopCapture,
+    suspendRecording: suspendCapture,
+    pauseRecording: pauseCapture,
+    resumeRecording: resumeCapture,
+    isPaused,
     takeScreenshot: captureScreenshot,
     recordedBlob,
     screenshotBlob,
     error: captureError,
     reset: resetCapture,
+    setRecordedBlob,
     setScreenshotBlob,
+    getPauseWindows,
+    getPausedMs,
   } = useScreenCapture()
 
-  const duration = useTimer(startTime, state === "recording")
+  const duration = useTimer(startTime, state === "recording", getPausedMs)
+
+  const handleTogglePause = useCallback(() => {
+    if (isPaused) {
+      resumeCapture()
+      return
+    }
+
+    pauseCapture().catch((error: unknown) => {
+      reportNonFatalError("Failed to pause the recording", error)
+    })
+  }, [isPaused, pauseCapture, resumeCapture])
 
   const clearDebuggerState = useCallback(async () => {
     if (debuggerSessionId) {
@@ -143,7 +196,9 @@ function App() {
       } satisfies DebuggerSubmissionInput
     }
 
-    const payload = buildDebuggerSubmissionPayload(snapshot)
+    const payload = buildDebuggerSubmissionPayload(snapshot, {
+      pauseWindows: getPauseWindows(),
+    })
     const summary = getDebuggerCaptureSummary(payload)
     const hasPayloadData = hasDebuggerPayloadData(payload)
 
@@ -163,25 +218,53 @@ function App() {
       summary,
       warnings,
     } satisfies DebuggerSubmissionInput
-  }, [debuggerSessionId])
+  }, [debuggerSessionId, getPauseWindows])
 
   const handleStopRecording = useCallback(async () => {
     const stoppedAt = Date.now()
-    await stopCapture()
+    const pausedMs = getPausedMs(stoppedAt)
+    const previewBlob = await suspendCapture()
+    if (previewBlob) {
+      setRecordedBlob(previewBlob)
+    } else {
+      // The stream already died, so there is nothing left to suspend.
+      await stopCapture()
+    }
+
     if (startTime) {
-      setRecordedDurationMs(Math.max(0, stoppedAt - startTime))
+      setRecordedDurationMs(Math.max(0, stoppedAt - startTime - pausedMs))
     }
     setState("stopped")
-  }, [startTime, stopCapture])
+  }, [getPausedMs, setRecordedBlob, startTime, stopCapture, suspendCapture])
+
+  /**
+   * Continues the suspended recording from the review screen. The stale
+   * preview is cleared so the "recording finished" effect does not bounce
+   * straight back to review.
+   */
+  const handleContinueRecording = useCallback(() => {
+    if (!resumeCapture()) {
+      return
+    }
+
+    setRecordedBlob(null)
+    setRecordedDurationMs(null)
+    setSubmitError(null)
+    setPreSubmitWarnings([])
+    setState("recording")
+  }, [resumeCapture, setRecordedBlob])
 
   useRecorderRecordingSync({
     captureType,
+    getPauseWindows,
+    isPaused,
     onStopFromPopup: handleStopRecording,
+    onTogglePauseFromPopup: handleTogglePause,
     state,
   })
 
   const startVideoCapture = useCallback(async () => {
-    const success = await startCapture()
+    const success = await startCapture(captureScope)
     if (success) {
       const startedAt = Date.now()
       const sessionId = debuggerSessionId
@@ -201,7 +284,7 @@ function App() {
       setRecordedDurationMs(null)
       setState("recording")
     }
-  }, [debuggerSessionId, startCapture])
+  }, [captureScope, debuggerSessionId, startCapture])
 
   const handleStartCapture = useCallback(async () => {
     if (captureType === "screenshot") {
@@ -219,11 +302,14 @@ function App() {
   useEffect(() => {
     if (state === "recording" && recordedBlob) {
       if (startTime) {
-        setRecordedDurationMs(Math.max(0, Date.now() - startTime))
+        const endedAt = Date.now()
+        setRecordedDurationMs(
+          Math.max(0, endedAt - startTime - getPausedMs(endedAt))
+        )
       }
       setState("stopped")
     }
-  }, [recordedBlob, startTime, state])
+  }, [getPausedMs, recordedBlob, startTime, state])
 
   useEffect(() => {
     if (state !== "stopped") {
@@ -288,15 +374,44 @@ function App() {
     })
   }
 
+  /**
+   * The recorder stays suspended while reviewing, so finalize it here to get
+   * the complete video rather than the preview snapshot taken at stop time.
+   */
+  const resolveSubmissionBlob = useCallback(async (): Promise<Blob | null> => {
+    if (captureType !== "video") {
+      return screenshotBlob
+    }
+
+    if (isPaused) {
+      return (await stopCapture()) ?? recordedBlob
+    }
+
+    return recordedBlob
+  }, [captureType, isPaused, recordedBlob, screenshotBlob, stopCapture])
+
+  const resolveDurationMs = useCallback((): number => {
+    if (captureType !== "video") {
+      return 0
+    }
+
+    if (recordedDurationMs !== null) {
+      return Math.max(0, recordedDurationMs)
+    }
+
+    return startTime ? Math.max(0, Date.now() - startTime - getPausedMs()) : 0
+  }, [captureType, getPausedMs, recordedDurationMs, startTime])
+
   const handleSubmit = async (values: {
     title: string
     description: string
     priority: Priority
+    isReportDetailActive: boolean
     testedFeature?: string
     testScenario?: string
     testCaseType?: TestCaseType
   }) => {
-    const blob = captureType === "video" ? recordedBlob : screenshotBlob
+    const blob = await resolveSubmissionBlob()
     if (!blob || blob.size === 0) {
       setSubmitError("Capture data is missing. Please capture again.")
       setState("stopped")
@@ -308,13 +423,7 @@ function App() {
     setSubmissionWarnings([])
 
     try {
-      const durationMs =
-        captureType === "video"
-          ? Math.max(
-              0,
-              recordedDurationMs ?? (startTime ? Date.now() - startTime : 0)
-            )
-          : 0
+      const durationMs = resolveDurationMs()
       const debuggerSubmission = await getDebuggerSubmissionInput()
       const captureContextSubmissionData =
         buildCaptureContextSubmissionData(captureContext)
@@ -326,7 +435,9 @@ function App() {
       const result = await submitBugReportWithUploads({
         attachment: blob,
         attachmentType: captureType,
-        roomId: roomsState.resolvedRoomId,
+        roomId: values.isReportDetailActive
+          ? roomsState.resolvedRoomId
+          : undefined,
         testedFeature: normalizeOptionalText(
           values.testedFeature,
           TESTED_FEATURE_MAX_LENGTH
@@ -389,12 +500,13 @@ function App() {
 
   useEffect(() => {
     if (state === "recording") {
-      document.title = `Recording ${formatDuration(duration)} - Crikket`
+      const label = isPaused ? "Paused" : "Recording"
+      document.title = `${label} ${formatDuration(duration)} - Crikket`
       return
     }
 
     document.title = "Crikket Bug Report"
-  }, [duration, state])
+  }, [duration, isPaused, state])
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100/80 p-6 sm:p-8">
@@ -404,10 +516,7 @@ function App() {
             Crikket Bug Report
           </CardTitle>
           <CardDescription className="text-sm">
-            {state === "idle" && "Waiting for capture"}
-            {state === "recording" && "Recording in progress..."}
-            {state === "stopped" && "Review and submit"}
-            {state === "success" && "Report submitted!"}
+            {getStateDescription(state, isPaused, captureScope)}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6 px-6 py-6">
@@ -419,27 +528,33 @@ function App() {
           ) : null}
 
           {state === "idle" ? (
-            <p className="text-center text-muted-foreground">
-              No active capture. Start from the extension popup.
-            </p>
+            <IdleStep
+              captureScope={captureScope}
+              onStartFullScreen={handleStartCapture}
+            />
           ) : null}
 
           {state === "recording" ? (
             <RecordingStep
               duration={duration}
+              isPaused={isPaused}
               onStopRecording={handleStopRecording}
+              onTogglePause={handleTogglePause}
+              pauseRecordingShortcut={shortcuts.pauseRecording}
               stopRecordingShortcut={shortcuts.stopRecording}
             />
           ) : null}
 
           {state === "stopped" || state === "submitting" ? (
             <FormStep
+              canContinueRecording={captureType === "video" && isPaused}
               captureType={captureType}
               debuggerSummary={debuggerSummary}
               initialTitle={suggestedTitle}
               isLoadingRooms={roomsState.isLoading}
               isSubmitting={state === "submitting"}
               onCancel={handleReset}
+              onContinueRecording={handleContinueRecording}
               onRoomChange={roomsState.selectRoom}
               onSubmit={handleSubmit}
               preSubmitWarnings={preSubmitWarnings}

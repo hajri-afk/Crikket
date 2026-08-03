@@ -1,12 +1,13 @@
 import { appendDebuggerSessionIdToUrl } from "@crikket/capture-core/debugger/recorder-session"
 import { reportNonFatalError } from "@crikket/shared/lib/errors"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   discardDebuggerSession,
   startDebuggerSession,
 } from "@/lib/bug-report-debugger/client"
 import {
   CAPTURE_CONTEXT_STORAGE_KEY,
+  CAPTURE_SCOPE_STORAGE_KEY,
   CAPTURE_TAB_ID_STORAGE_KEY,
   type CaptureContext,
   getActiveTabContext,
@@ -15,6 +16,7 @@ import {
   RECORDING_IN_PROGRESS_STORAGE_KEY,
   RECORDING_STARTED_AT_STORAGE_KEY,
 } from "@/lib/capture-context"
+import { type CaptureScope, isCaptureScope } from "@/lib/display-media"
 
 export type PopupCaptureType = "video" | "screenshot"
 
@@ -27,6 +29,8 @@ interface UsePopupCaptureReturn {
   captureError: string | null
   pendingCaptureType: PopupCaptureType | null
   recordingCountdown: number | null
+  captureScope: CaptureScope
+  selectCaptureScope: (scope: CaptureScope) => void
   requestCapture: (captureType: PopupCaptureType) => void
   clearPendingCapture: () => void
   startCapture: (captureType: PopupCaptureType) => Promise<void>
@@ -45,6 +49,27 @@ export function usePopupCapture(): UsePopupCaptureReturn {
   )
   const [pendingCaptureType, setPendingCaptureType] =
     useState<PopupCaptureType | null>(null)
+  const [captureScope, setCaptureScope] = useState<CaptureScope>("tab")
+
+  // Restore the last scope so a QA who always records the whole screen does
+  // not have to re-pick it on every capture.
+  useEffect(() => {
+    chrome.storage.local.get([CAPTURE_SCOPE_STORAGE_KEY], (result) => {
+      const stored = result[CAPTURE_SCOPE_STORAGE_KEY]
+      if (isCaptureScope(stored)) {
+        setCaptureScope(stored)
+      }
+    })
+  }, [])
+
+  const selectCaptureScope = (scope: CaptureScope) => {
+    setCaptureScope(scope)
+    chrome.storage.local
+      .set({ [CAPTURE_SCOPE_STORAGE_KEY]: scope })
+      .catch((error: unknown) => {
+        reportNonFatalError("Failed to persist the capture scope", error)
+      })
+  }
 
   const requestCapture = (captureType: PopupCaptureType) => {
     setCaptureError(null)
@@ -80,6 +105,7 @@ export function usePopupCapture(): UsePopupCaptureReturn {
         await startVideoCapture({
           activeTab,
           captureContext,
+          captureScope,
           debuggerSessionId,
           setRecordingCountdown,
         })
@@ -105,6 +131,8 @@ export function usePopupCapture(): UsePopupCaptureReturn {
     captureError,
     pendingCaptureType,
     recordingCountdown,
+    captureScope,
+    selectCaptureScope,
     requestCapture,
     clearPendingCapture,
     startCapture,
@@ -176,33 +204,48 @@ async function startScreenshotCapture(input: {
 async function startVideoCapture(input: {
   activeTab: ActiveCaptureTab
   captureContext: CaptureContext
+  captureScope: CaptureScope
   debuggerSessionId: string
   setRecordingCountdown: (value: number | null) => void
 }): Promise<void> {
-  const countdownEndsAt = Date.now() + RECORDING_COUNTDOWN_SECONDS * 1000
+  // The countdown exists to give you time to switch to the tab you want on
+  // camera. Screen scope instead opens Chrome's picker as soon as the recorder
+  // loads, so counting down first would just delay that dialog.
+  if (input.captureScope === "tab") {
+    const countdownEndsAt = Date.now() + RECORDING_COUNTDOWN_SECONDS * 1000
 
-  await chrome.storage.local.set({
-    [RECORDING_IN_PROGRESS_STORAGE_KEY]: true,
-    [RECORDING_COUNTDOWN_ENDS_AT_STORAGE_KEY]: countdownEndsAt,
-  })
+    await chrome.storage.local.set({
+      [RECORDING_IN_PROGRESS_STORAGE_KEY]: true,
+      [RECORDING_COUNTDOWN_ENDS_AT_STORAGE_KEY]: countdownEndsAt,
+    })
 
-  await runCountdown(input.setRecordingCountdown)
+    await runCountdown(input.setRecordingCountdown)
 
-  await chrome.storage.local.remove([RECORDING_COUNTDOWN_ENDS_AT_STORAGE_KEY])
+    await chrome.storage.local.remove([RECORDING_COUNTDOWN_ENDS_AT_STORAGE_KEY])
+  } else {
+    await chrome.storage.local.set({
+      [RECORDING_IN_PROGRESS_STORAGE_KEY]: true,
+    })
+  }
 
   await chrome.storage.local.set({
     [CAPTURE_CONTEXT_STORAGE_KEY]: input.captureContext,
     [CAPTURE_TAB_ID_STORAGE_KEY]: input.activeTab.id,
-    startRecordingImmediately: true,
+    // Screen scope needs a click in the recorder to satisfy Chrome's user
+    // activation rule, so it must not auto-start.
+    startRecordingImmediately: input.captureScope === "tab",
   })
 
   const recorderUrl = appendDebuggerSessionIdToUrl(
-    chrome.runtime.getURL("/recorder.html?captureType=video"),
+    chrome.runtime.getURL(
+      `/recorder.html?captureType=video&captureScope=${input.captureScope}`
+    ),
     input.debuggerSessionId
   )
 
+  // Screen scope needs the recorder in front so its start button is visible.
   const recorderTab = await chrome.tabs.create({
-    active: false,
+    active: input.captureScope === "screen",
     url: recorderUrl,
   })
 

@@ -17,20 +17,24 @@ function App() {
   const shortcuts = useCommandShortcuts()
   const {
     captureError,
+    captureScope,
     clearPendingCapture,
     isCapturing,
     pendingCaptureType,
     recordingCountdown: localRecordingCountdown,
     requestCapture,
+    selectCaptureScope,
     startCapture,
   } = usePopupCapture()
   const {
     isRecordingInProgress,
+    isRecordingPaused,
     recordingCountdown: syncedRecordingCountdown,
     recordingDurationMs,
     isStoppingFromPopup,
     stopError,
     stopFromPopup,
+    togglePauseFromPopup,
     resetRecordingState,
   } = usePopupRecordingStatus()
 
@@ -100,13 +104,18 @@ function App() {
         )}
 
         <PopupCaptureActions
+          captureScope={captureScope}
           isBusy={isBusy}
           isRecordingInProgress={isRecordingInProgress}
+          isRecordingPaused={isRecordingPaused}
           onClearPendingCapture={clearPendingCapture}
           onRequestCapture={requestCapture}
           onResetRecordingState={resetRecordingState}
+          onSelectCaptureScope={selectCaptureScope}
           onStartCapture={startCapture}
           onStopFromPopup={stopFromPopup}
+          onTogglePauseFromPopup={togglePauseFromPopup}
+          pauseRecordingShortcut={shortcuts.pauseRecording}
           pendingCaptureType={pendingCaptureType}
           recordingCountdown={recordingCountdown}
           recordingDurationMs={recordingDurationMs}

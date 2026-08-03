@@ -22,8 +22,9 @@ import {
   SelectValue,
 } from "@crikket/ui/components/ui/select"
 import { Textarea } from "@crikket/ui/components/ui/textarea"
+import { cn } from "@crikket/ui/lib/utils"
 import { useForm } from "@tanstack/react-form"
-import { AlertTriangle, FlaskConical } from "lucide-react"
+import { AlertTriangle, ClipboardList, FlaskConical } from "lucide-react"
 import { type SyntheticEvent, useCallback, useEffect, useRef } from "react"
 import * as z from "zod"
 import { RoomPicker, type RoomPickerOption } from "@/components/room-picker"
@@ -34,26 +35,87 @@ const priorityValues = Object.values(PRIORITY_OPTIONS) as [
   ...Priority[],
 ]
 
-const formSchema = z.object({
-  title: z.string().max(200, "Title must be at most 200 characters."),
-  description: z
-    .string()
-    .max(3000, "Description must be at most 3000 characters."),
-  priority: z.enum(priorityValues),
-  testedFeature: z
-    .string()
-    .max(
-      TESTED_FEATURE_MAX_LENGTH,
-      `Feature must be at most ${TESTED_FEATURE_MAX_LENGTH} characters.`
-    ),
-  testScenario: z
-    .string()
-    .max(
-      TEST_SCENARIO_MAX_LENGTH,
-      `Test scenario must be at most ${TEST_SCENARIO_MAX_LENGTH} characters.`
-    ),
-  testCaseType: z.string(),
-})
+const formSchema = z
+  .object({
+    title: z.string().max(200, "Title must be at most 200 characters."),
+    description: z
+      .string()
+      .max(3000, "Description must be at most 3000 characters."),
+    priority: z.enum(priorityValues),
+    isReportDetailActive: z.boolean(),
+    isTestScenarioActive: z.boolean(),
+    testedFeature: z.string(),
+    testScenario: z.string(),
+    testCaseType: z.string(),
+  })
+  // QA scope is opt-in, so its length limits only apply while the section is
+  // active. Otherwise a deactivated leftover draft could block submission.
+  .superRefine((values, ctx) => {
+    if (!values.isTestScenarioActive) {
+      return
+    }
+
+    if (values.testedFeature.length > TESTED_FEATURE_MAX_LENGTH) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["testedFeature"],
+        message: `Feature must be at most ${TESTED_FEATURE_MAX_LENGTH} characters.`,
+      })
+    }
+
+    if (values.testScenario.length > TEST_SCENARIO_MAX_LENGTH) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["testScenario"],
+        message: `Test scenario must be at most ${TEST_SCENARIO_MAX_LENGTH} characters.`,
+      })
+    }
+  })
+
+interface ActiveSwitchProps {
+  isActive: boolean
+  labelId: string
+  onToggle: (next: boolean) => void
+}
+
+/**
+ * Small Active/Inactive switch. Hand-rolled because the UI package has no
+ * Switch primitive and the extension should not pull in another dependency.
+ */
+function ActiveSwitch({ isActive, labelId, onToggle }: ActiveSwitchProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={cn(
+          "text-xs",
+          isActive ? "font-medium text-foreground" : "text-muted-foreground"
+        )}
+        id={labelId}
+      >
+        {isActive ? "Active" : "Inactive"}
+      </span>
+      <button
+        aria-checked={isActive}
+        aria-labelledby={labelId}
+        className={cn(
+          "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          isActive ? "bg-primary" : "bg-input"
+        )}
+        onClick={() => onToggle(!isActive)}
+        role="switch"
+        type="button"
+      >
+        <span
+          className={cn(
+            "pointer-events-none block size-4 rounded-full bg-background shadow transition-transform",
+            isActive ? "translate-x-[18px]" : "translate-x-0.5"
+          )}
+        />
+      </button>
+    </div>
+  )
+}
 
 /** Select value used when QA has not classified the scenario. */
 const NO_TEST_CASE_TYPE_VALUE = "__unset__"
@@ -82,17 +144,23 @@ interface FormStepProps {
     title: string
     description: string
     priority: Priority
+    isReportDetailActive: boolean
     testedFeature?: string
     testScenario?: string
     testCaseType?: TestCaseType
   }) => void
   onCancel: () => void
+  /** True while the recorder is only suspended and can still be continued. */
+  canContinueRecording: boolean
+  onContinueRecording: () => void
 }
 
 interface FormValues {
   title: string
   description: string
   priority: Priority
+  isReportDetailActive: boolean
+  isTestScenarioActive: boolean
   testedFeature: string
   testScenario: string
   testCaseType: string
@@ -114,11 +182,15 @@ export function FormStep({
   onRoomChange,
   onSubmit,
   onCancel,
+  canContinueRecording,
+  onContinueRecording,
 }: FormStepProps) {
   const defaultValues: FormValues = {
     title: initialTitle,
     description: "",
     priority: PRIORITY_OPTIONS.none,
+    isReportDetailActive: true,
+    isTestScenarioActive: false,
     testedFeature: "",
     testScenario: "",
     testCaseType: NO_TEST_CASE_TYPE_VALUE,
@@ -130,16 +202,27 @@ export function FormStep({
       onSubmit: formSchema,
     },
     onSubmit: async ({ value }) => {
+      // A deactivated QA section submits nothing, even if a draft was typed
+      // before it was switched off.
+      const isScenarioActive = value.isTestScenarioActive
+
+      const isReportDetailActive = value.isReportDetailActive
+
       await onSubmit({
-        title: value.title,
+        title: isReportDetailActive ? value.title : "",
         description: value.description,
-        priority: value.priority,
-        testedFeature: value.testedFeature.trim() || undefined,
-        testScenario: value.testScenario.trim() || undefined,
+        priority: isReportDetailActive ? value.priority : PRIORITY_OPTIONS.none,
+        isReportDetailActive,
+        testedFeature: isScenarioActive
+          ? value.testedFeature.trim() || undefined
+          : undefined,
+        testScenario: isScenarioActive
+          ? value.testScenario.trim() || undefined
+          : undefined,
         testCaseType:
-          value.testCaseType === NO_TEST_CASE_TYPE_VALUE
-            ? undefined
-            : (value.testCaseType as TestCaseType),
+          isScenarioActive && value.testCaseType !== NO_TEST_CASE_TYPE_VALUE
+            ? (value.testCaseType as TestCaseType)
+            : undefined,
       })
     },
   })
@@ -254,89 +337,131 @@ export function FormStep({
             </div>
           </section>
 
-          <RoomPicker
-            error={roomsError}
-            helperText={
-              selectedRoom
-                ? `This report will be saved to "${selectedRoom.name}".`
-                : "Pick a project room so this report does not have to be moved later."
-            }
-            isLoading={isLoadingRooms}
-            onSelect={onRoomChange}
-            rooms={rooms}
-            selectedRoomId={selectedRoomId}
-          />
+          {/* Room, title, and priority are the routing details for the
+              report. Active by default, but switchable off for quick captures
+              that only need the video. */}
+          <form.Field name="isReportDetailActive">
+            {(activeField) => {
+              const isReportDetailActive = activeField.state.value
 
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_190px]">
-            <form.Field name="title">
-              {(field) => {
-                const isInvalid =
-                  field.state.meta.isTouched &&
-                  field.state.meta.errors.length > 0
-                return (
-                  <Field data-invalid={isInvalid}>
-                    <FieldLabel htmlFor={field.name}>
-                      Title (Optional)
-                    </FieldLabel>
-                    <Input
-                      aria-invalid={isInvalid}
-                      id={field.name}
-                      onBlur={field.handleBlur}
-                      onChange={(event) =>
-                        field.handleChange(event.target.value)
-                      }
-                      placeholder="Give this report a quick title"
-                      value={field.state.value}
+              return (
+                <section className="space-y-4 rounded-xl border bg-muted/20 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <ClipboardList className="size-4 text-muted-foreground" />
+                      <p className="font-medium text-sm">Report details</p>
+                    </div>
+
+                    <ActiveSwitch
+                      isActive={isReportDetailActive}
+                      labelId="report-detail-active-label"
+                      onToggle={activeField.handleChange}
                     />
-                    {isInvalid && (
-                      <FieldError errors={field.state.meta.errors} />
-                    )}
-                  </Field>
-                )
-              }}
-            </form.Field>
+                  </div>
 
-            <form.Field name="priority">
-              {(field) => {
-                const isInvalid =
-                  field.state.meta.isTouched &&
-                  field.state.meta.errors.length > 0
-                return (
-                  <Field data-invalid={isInvalid}>
-                    <FieldLabel htmlFor={field.name}>
-                      Priority (Optional)
-                    </FieldLabel>
-                    <Select
-                      onValueChange={(value) => {
-                        if (value) {
-                          field.handleChange(value as Priority)
+                  {isReportDetailActive ? (
+                    <div className="space-y-4">
+                      <RoomPicker
+                        error={roomsError}
+                        helperText={
+                          selectedRoom
+                            ? `This report will be saved to "${selectedRoom.name}".`
+                            : "Pick a project room so this report does not have to be moved later."
                         }
-                      }}
-                      value={field.state.value}
-                    >
-                      <SelectTrigger
-                        aria-invalid={isInvalid}
-                        className="w-full"
-                        id={field.name}
-                      >
-                        <SelectValue className="capitalize" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {priorityValues.map((priority) => (
-                          <SelectItem key={priority} value={priority}>
-                            {formatPriorityLabel(priority)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {isInvalid && (
-                      <FieldError errors={field.state.meta.errors} />
-                    )}
-                  </Field>
-                )
-              }}
-            </form.Field>
-          </div>
+                        isLoading={isLoadingRooms}
+                        onSelect={onRoomChange}
+                        rooms={rooms}
+                        selectedRoomId={selectedRoomId}
+                      />
+
+                      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_190px]">
+                        <form.Field name="title">
+                          {(field) => {
+                            const isInvalid =
+                              field.state.meta.isTouched &&
+                              field.state.meta.errors.length > 0
+                            return (
+                              <Field data-invalid={isInvalid}>
+                                <FieldLabel htmlFor={field.name}>
+                                  Title (Optional)
+                                </FieldLabel>
+                                <Input
+                                  aria-invalid={isInvalid}
+                                  id={field.name}
+                                  onBlur={field.handleBlur}
+                                  onChange={(event) =>
+                                    field.handleChange(event.target.value)
+                                  }
+                                  placeholder="Give this report a quick title"
+                                  value={field.state.value}
+                                />
+                                {isInvalid && (
+                                  <FieldError
+                                    errors={field.state.meta.errors}
+                                  />
+                                )}
+                              </Field>
+                            )
+                          }}
+                        </form.Field>
+
+                        <form.Field name="priority">
+                          {(field) => {
+                            const isInvalid =
+                              field.state.meta.isTouched &&
+                              field.state.meta.errors.length > 0
+                            return (
+                              <Field data-invalid={isInvalid}>
+                                <FieldLabel htmlFor={field.name}>
+                                  Priority (Optional)
+                                </FieldLabel>
+                                <Select
+                                  onValueChange={(value) => {
+                                    if (value) {
+                                      field.handleChange(value as Priority)
+                                    }
+                                  }}
+                                  value={field.state.value}
+                                >
+                                  <SelectTrigger
+                                    aria-invalid={isInvalid}
+                                    className="w-full"
+                                    id={field.name}
+                                  >
+                                    <SelectValue className="capitalize" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {priorityValues.map((priority) => (
+                                      <SelectItem
+                                        key={priority}
+                                        value={priority}
+                                      >
+                                        {formatPriorityLabel(priority)}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {isInvalid && (
+                                  <FieldError
+                                    errors={field.state.meta.errors}
+                                  />
+                                )}
+                              </Field>
+                            )
+                          }}
+                        </form.Field>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground text-xs">
+                      Turn this on to pick a room and set a title and priority.
+                      Otherwise the report is filed without them.
+                    </p>
+                  )}
+                </section>
+              )
+            }}
+          </form.Field>
 
           <form.Field name="description">
             {(field) => {
@@ -364,126 +489,156 @@ export function FormStep({
           </form.Field>
 
           {/* QA scope, separate from the bug description so devs and PM can see
-              exactly what was exercised. */}
-          <section className="space-y-4 rounded-xl border bg-muted/20 p-4">
-            <div className="flex items-center gap-1.5">
-              <FlaskConical className="size-4 text-muted-foreground" />
-              <p className="font-medium text-sm">Test scenario (QA)</p>
-            </div>
+              exactly what was exercised. Switched off by default so reporters
+              who are not running a QA session are not asked to fill it in. */}
+          <form.Field name="isTestScenarioActive">
+            {(activeField) => {
+              const isScenarioActive = activeField.state.value
 
-            <form.Field name="testedFeature">
-              {(field) => {
-                const isInvalid =
-                  field.state.meta.isTouched &&
-                  field.state.meta.errors.length > 0
-
-                return (
-                  <Field data-invalid={isInvalid}>
-                    <FieldLabel htmlFor={field.name}>
-                      Feature / menu tested (Optional)
-                    </FieldLabel>
-                    <Input
-                      aria-invalid={isInvalid}
-                      id={field.name}
-                      maxLength={TESTED_FEATURE_MAX_LENGTH}
-                      onBlur={field.handleBlur}
-                      onChange={(event) =>
-                        field.handleChange(event.target.value)
-                      }
-                      placeholder={TESTED_FEATURE_PLACEHOLDER}
-                      value={field.state.value}
-                    />
-                    {isInvalid ? (
-                      <FieldError errors={field.state.meta.errors} />
-                    ) : (
-                      <span className="text-muted-foreground text-xs">
-                        Which menu or feature you clicked through.
-                      </span>
-                    )}
-                  </Field>
-                )
-              }}
-            </form.Field>
-
-            <form.Field name="testCaseType">
-              {(field) => (
-                <Field>
-                  <FieldLabel htmlFor={field.name}>
-                    Case type (Optional)
-                  </FieldLabel>
-                  <Select
-                    onValueChange={(value) => {
-                      if (value) {
-                        field.handleChange(value)
-                      }
-                    }}
-                    value={field.state.value}
-                  >
-                    <SelectTrigger className="w-full" id={field.name}>
-                      <SelectValue>
-                        {field.state.value === NO_TEST_CASE_TYPE_VALUE
-                          ? "Not set"
-                          : formatTestCaseTypeLabel(
-                              field.state.value as TestCaseType
-                            )}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_TEST_CASE_TYPE_VALUE}>
-                        Not set
-                      </SelectItem>
-                      {TEST_CASE_TYPE_VALUES.map((value) => (
-                        <SelectItem key={value} value={value}>
-                          {formatTestCaseTypeLabel(value)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
-            </form.Field>
-
-            <form.Field name="testScenario">
-              {(field) => {
-                const isInvalid =
-                  field.state.meta.isTouched &&
-                  field.state.meta.errors.length > 0
-
-                return (
-                  <Field data-invalid={isInvalid}>
-                    <FieldLabel htmlFor={field.name}>
-                      Scenario covered (Optional)
-                    </FieldLabel>
-                    <Textarea
-                      aria-invalid={isInvalid}
-                      className="resize-y"
-                      id={field.name}
-                      maxLength={TEST_SCENARIO_MAX_LENGTH}
-                      onBlur={field.handleBlur}
-                      onChange={(event) =>
-                        field.handleChange(event.target.value)
-                      }
-                      placeholder={TEST_SCENARIO_PLACEHOLDER}
-                      rows={6}
-                      value={field.state.value}
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      {isInvalid ? (
-                        <FieldError errors={field.state.meta.errors} />
-                      ) : (
-                        <span className="text-muted-foreground text-xs">
-                          List the positive and negative cases you checked.
-                        </span>
-                      )}
-                      <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-                        {field.state.value.length}/{TEST_SCENARIO_MAX_LENGTH}
-                      </span>
+              return (
+                <section className="space-y-4 rounded-xl border bg-muted/20 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <FlaskConical className="size-4 text-muted-foreground" />
+                      <p className="font-medium text-sm">Test scenario (QA)</p>
                     </div>
-                  </Field>
-                )
-              }}
-            </form.Field>
-          </section>
+
+                    <ActiveSwitch
+                      isActive={isScenarioActive}
+                      labelId="test-scenario-active-label"
+                      onToggle={activeField.handleChange}
+                    />
+                  </div>
+
+                  {isScenarioActive ? (
+                    <div className="space-y-4">
+                      <form.Field name="testedFeature">
+                        {(field) => {
+                          const isInvalid =
+                            field.state.meta.isTouched &&
+                            field.state.meta.errors.length > 0
+
+                          return (
+                            <Field data-invalid={isInvalid}>
+                              <FieldLabel htmlFor={field.name}>
+                                Feature / menu tested (Optional)
+                              </FieldLabel>
+                              <Input
+                                aria-invalid={isInvalid}
+                                id={field.name}
+                                maxLength={TESTED_FEATURE_MAX_LENGTH}
+                                onBlur={field.handleBlur}
+                                onChange={(event) =>
+                                  field.handleChange(event.target.value)
+                                }
+                                placeholder={TESTED_FEATURE_PLACEHOLDER}
+                                value={field.state.value}
+                              />
+                              {isInvalid ? (
+                                <FieldError errors={field.state.meta.errors} />
+                              ) : (
+                                <span className="text-muted-foreground text-xs">
+                                  Which menu or feature you clicked through.
+                                </span>
+                              )}
+                            </Field>
+                          )
+                        }}
+                      </form.Field>
+
+                      <form.Field name="testCaseType">
+                        {(field) => (
+                          <Field>
+                            <FieldLabel htmlFor={field.name}>
+                              Case type (Optional)
+                            </FieldLabel>
+                            <Select
+                              onValueChange={(value) => {
+                                if (value) {
+                                  field.handleChange(value)
+                                }
+                              }}
+                              value={field.state.value}
+                            >
+                              <SelectTrigger className="w-full" id={field.name}>
+                                <SelectValue>
+                                  {field.state.value === NO_TEST_CASE_TYPE_VALUE
+                                    ? "Not set"
+                                    : formatTestCaseTypeLabel(
+                                        field.state.value as TestCaseType
+                                      )}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_TEST_CASE_TYPE_VALUE}>
+                                  Not set
+                                </SelectItem>
+                                {TEST_CASE_TYPE_VALUES.map((value) => (
+                                  <SelectItem key={value} value={value}>
+                                    {formatTestCaseTypeLabel(value)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                        )}
+                      </form.Field>
+
+                      <form.Field name="testScenario">
+                        {(field) => {
+                          const isInvalid =
+                            field.state.meta.isTouched &&
+                            field.state.meta.errors.length > 0
+
+                          return (
+                            <Field data-invalid={isInvalid}>
+                              <FieldLabel htmlFor={field.name}>
+                                Scenario covered (Optional)
+                              </FieldLabel>
+                              <Textarea
+                                aria-invalid={isInvalid}
+                                className="resize-y"
+                                id={field.name}
+                                maxLength={TEST_SCENARIO_MAX_LENGTH}
+                                onBlur={field.handleBlur}
+                                onChange={(event) =>
+                                  field.handleChange(event.target.value)
+                                }
+                                placeholder={TEST_SCENARIO_PLACEHOLDER}
+                                rows={6}
+                                value={field.state.value}
+                              />
+                              <div className="flex items-center justify-between gap-2">
+                                {isInvalid ? (
+                                  <FieldError
+                                    errors={field.state.meta.errors}
+                                  />
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">
+                                    List the positive and negative cases you
+                                    checked.
+                                  </span>
+                                )}
+                                <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+                                  {field.state.value.length}/
+                                  {TEST_SCENARIO_MAX_LENGTH}
+                                </span>
+                              </div>
+                            </Field>
+                          )
+                        }}
+                      </form.Field>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground text-xs">
+                      Turn this on to record which feature you tested, the case
+                      type, and the scenario steps you ran.
+                    </p>
+                  )}
+                </section>
+              )
+            }}
+          </form.Field>
         </div>
 
         {preSubmitWarnings.length > 0 ? (
@@ -519,6 +674,17 @@ export function FormStep({
           >
             Cancel
           </Button>
+          {canContinueRecording ? (
+            <Button
+              className="flex-1"
+              disabled={isBusy}
+              onClick={onContinueRecording}
+              type="button"
+              variant="secondary"
+            >
+              ▶ Lanjut rekam
+            </Button>
+          ) : null}
           <Button className="flex-1" disabled={isBusy} type="submit">
             {isBusy ? "Submitting..." : "Submit Bug Report"}
           </Button>

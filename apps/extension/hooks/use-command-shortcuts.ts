@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import {
+  PAUSE_RECORDING_COMMAND,
   START_RECORDING_COMMAND,
   START_SCREENSHOT_COMMAND,
   STOP_RECORDING_COMMAND,
@@ -9,18 +10,21 @@ interface CommandShortcuts {
   startRecording: string | null
   startScreenshot: string | null
   stopRecording: string | null
+  pauseRecording: string | null
 }
 
 const EMPTY_COMMAND_SHORTCUTS: CommandShortcuts = {
   startRecording: null,
   startScreenshot: null,
   stopRecording: null,
+  pauseRecording: null,
 }
 
 const COMMAND_TO_SHORTCUT_KEY = {
   [START_RECORDING_COMMAND]: "startRecording",
   [START_SCREENSHOT_COMMAND]: "startScreenshot",
   [STOP_RECORDING_COMMAND]: "stopRecording",
+  [PAUSE_RECORDING_COMMAND]: "pauseRecording",
 } as const satisfies Record<string, keyof CommandShortcuts>
 
 function isTrackedCommandName(

@@ -11,6 +11,7 @@ import {
 export const START_RECORDING_COMMAND = "start-video-recording"
 export const START_SCREENSHOT_COMMAND = "start-screenshot-capture"
 export const STOP_RECORDING_COMMAND = "stop-video-recording"
+export const PAUSE_RECORDING_COMMAND = "pause-video-recording"
 
 export async function handleStartRecordingFromHotkey(): Promise<void> {
   await queueCaptureStartFromHotkey(HOTKEY_START_VIDEO_CAPTURE_STORAGE_KEY)
@@ -51,6 +52,19 @@ export async function handleStopRecordingFromHotkey(): Promise<void> {
   await focusRecorderTab()
 }
 
+export async function handleTogglePauseRecordingFromHotkey(): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({
+      type: "TOGGLE_PAUSE_RECORDING_FROM_POPUP",
+    })
+  } catch (error: unknown) {
+    reportNonFatalError(
+      "Failed to send TOGGLE_PAUSE_RECORDING_FROM_POPUP for hotkey pause",
+      error
+    )
+  }
+}
+
 export async function handleRecorderHotkeyCommand(
   command: string
 ): Promise<void> {
@@ -66,6 +80,13 @@ export async function handleRecorderHotkeyCommand(
 
   if (command === STOP_RECORDING_COMMAND) {
     await handleStopRecordingFromHotkey()
+    return
+  }
+
+  // Pause deliberately does not focus the recorder tab, so QA can keep
+  // interacting with the page under test.
+  if (command === PAUSE_RECORDING_COMMAND) {
+    await handleTogglePauseRecordingFromHotkey()
   }
 }
 

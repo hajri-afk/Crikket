@@ -20,6 +20,7 @@ export function useRecorderInit({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const type = (params.get("captureType") as CaptureType) || "video"
+
     onCaptureTypeChange(type)
 
     if (type === "screenshot") {

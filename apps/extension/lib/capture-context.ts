@@ -7,6 +7,14 @@ export const RECORDER_TAB_ID_STORAGE_KEY = "recorderTabId"
 export const RECORDING_COUNTDOWN_ENDS_AT_STORAGE_KEY =
   "recordingCountdownEndsAt"
 export const RECORDING_STARTED_AT_STORAGE_KEY = "recordingStartedAt"
+/** True while the recorder is paused, so the popup can mirror the state. */
+export const RECORDING_PAUSED_STORAGE_KEY = "recordingPaused"
+/** Paused milliseconds from pause windows that have already been closed. */
+export const RECORDING_PAUSED_MS_STORAGE_KEY = "recordingPausedMs"
+/** Start of the pause that is still open, or absent when running. */
+export const RECORDING_PAUSED_AT_STORAGE_KEY = "recordingPausedAt"
+/** Last capture scope the user picked, so the popup can restore it. */
+export const CAPTURE_SCOPE_STORAGE_KEY = "captureScope"
 export const HOTKEY_START_VIDEO_CAPTURE_STORAGE_KEY = "hotkeyStartVideoCapture"
 export const HOTKEY_START_SCREENSHOT_CAPTURE_STORAGE_KEY =
   "hotkeyStartScreenshotCapture"
@@ -66,7 +74,35 @@ export const clearRecordingState = async (): Promise<void> => {
     RECORDER_TAB_ID_STORAGE_KEY,
     RECORDING_COUNTDOWN_ENDS_AT_STORAGE_KEY,
     RECORDING_STARTED_AT_STORAGE_KEY,
+    RECORDING_PAUSED_STORAGE_KEY,
+    RECORDING_PAUSED_MS_STORAGE_KEY,
+    RECORDING_PAUSED_AT_STORAGE_KEY,
   ])
+}
+
+/**
+ * Mirrors the recorder's pause state into storage. The popup has no access to
+ * the MediaRecorder, so this is how it learns to freeze its timer and show the
+ * right label while a recording is on hold.
+ */
+export const writeRecordingPauseState = async (input: {
+  isPaused: boolean
+  closedPausedMs: number
+  pausedAt: number | null
+}): Promise<void> => {
+  await chrome.storage.local.set({
+    [RECORDING_PAUSED_STORAGE_KEY]: input.isPaused,
+    [RECORDING_PAUSED_MS_STORAGE_KEY]: input.closedPausedMs,
+  })
+
+  if (input.pausedAt === null) {
+    await chrome.storage.local.remove([RECORDING_PAUSED_AT_STORAGE_KEY])
+    return
+  }
+
+  await chrome.storage.local.set({
+    [RECORDING_PAUSED_AT_STORAGE_KEY]: input.pausedAt,
+  })
 }
 
 /** Clears the recording state when the tab that owned the recording is gone. */
